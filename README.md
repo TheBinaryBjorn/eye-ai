@@ -25,11 +25,18 @@ in `main.py`, which is the single place that wires them together.
 
 - [src/microphone/microphone_stream.py](src/microphone/microphone_stream.py) — `MicrophoneStream`: hardware interaction only. Records raw audio while active and returns an `AudioClip` (samples + sample rate). Knows nothing about transcription.
 - [src/transcription/speech_recognizer.py](src/transcription/speech_recognizer.py) — `SpeechRecognizer`: wraps a local `faster-whisper` model, turns an `AudioClip` into text. Knows nothing about the microphone or the LLM.
-- [src/llm/conversational_agent.py](src/llm/conversational_agent.py) — `ConversationalAgent`: wraps a local Ollama model, holds the chat history, and answers a question given the current `ObjectDescription` list as scene context. Knows nothing about audio hardware, transcription, or synthesis.
+- [src/llm/conversational_agent.py](src/llm/conversational_agent.py) — `ConversationalAgent`: wraps a local Ollama model, holds the chat history, and answers a question given the current `ObjectDescription` list as scene context. Exposes a clean `history` property (`ChatMessage` records, no system prompt or scene-context prefix) purely for display. Knows nothing about audio hardware, transcription, synthesis, or display.
 - [src/synthesis/speech_synthesizer.py](src/synthesis/speech_synthesizer.py) — `SpeechSynthesizer`: wraps a local Piper TTS voice, turns the LLM's text reply into an `AudioClip`. Knows nothing about the LLM or playback.
 - [src/speaker/speaker_output.py](src/speaker/speaker_output.py) — `SpeakerOutput`: hardware interaction only. Plays an `AudioClip` through the system speakers. Knows nothing about how it was synthesized.
 
-- [main.py](main.py) — runs the vision loop every frame, and on a `v` key press runs one push-to-talk turn through the voice pipeline using the vision pipeline's latest `ObjectDescription` list as context.
+- [main.py](main.py) — runs the vision loop every frame, and on a `v` key press runs one push-to-talk turn through the voice pipeline using the vision pipeline's latest `ObjectDescription` list as context. Tracks which `VoiceState` (recording/transcribing/thinking/speaking) the display should show, and passes the agent's `history` to it each frame so the side panel stays current.
+
+The side panel (still rendered by `StreamDisplay`, still fed nothing but
+plain data) has three parts: a status banner reflecting the current
+`VoiceState`, the detected-objects list, and the tail of the chat history
+that fits in the remaining space. `StreamDisplay` decides how to draw each
+`VoiceState`; it doesn't know what a state means for the pipeline, just
+what color/label to show for it.
 
 Because every module only exchanges plain data (numpy frames, `Detection` /
 `ObjectDescription` / `AudioClip` dataclasses, or text) with its neighbors,
@@ -71,17 +78,28 @@ python main.py
 ```
 
 One window opens: the live video with red bounding boxes on the left, and a
-"Detected Objects" panel on the right listing each object's name,
-confidence, size, dominant color, and a short fact.
+side panel on the right with three sections — a status banner, "Detected
+Objects", and "Chat History".
 
-- Press `v` once to start recording a question, press `v` again to stop and
-  send it. The transcript and reply are printed to the console, and the
-  reply is spoken back through your speakers.
+- Press `v` once to start recording a question; the status banner shows a
+  blinking red **● Recording** dot (this part is genuinely live). Press `v`
+  again to stop and send it.
+- While your question is processed, the banner steps through
+  **Transcribing... → Thinking... → Speaking...** (orange / yellow /
+  green), and the reply is spoken back through your speakers.
+- Once a turn completes, "Chat History" shows the tail of the conversation
+  (your transcribed question and the assistant's reply), most recent at the
+  bottom.
 - Press `q` to quit.
 
-Note: the video window freezes for the few seconds it takes to transcribe,
-think, and speak during a voice turn — the vision and voice pipelines share
-one thread in this version.
+Notes:
+- The video window freezes for the few seconds it takes to transcribe,
+  think, and speak during a voice turn — the vision and voice pipelines
+  share one thread in this version. Each status is still shown on screen
+  for the whole step it describes, since the panel is redrawn right before
+  that step starts.
+- A key pressed while a voice turn is mid-flight (e.g. `q` during
+  "Thinking...") is not registered — press it again once the turn finishes.
 
 ## Configuration
 
