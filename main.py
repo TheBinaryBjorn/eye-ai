@@ -5,20 +5,23 @@ Voice:   MicrophoneStream -> SpeechRecognizer -> ConversationalAgent
          -> SpeechSynthesizer -> SpeakerOutput
 
 Every module above only exchanges plain data with its neighbors (frames,
-Detection/ObjectDescription records, AudioClip, text) -- this file is the
-only place that knows how they fit together.
+Detection/ObjectDescription records, AudioClip, ChatMessage, text) -- this
+file is the only place that knows how they fit together, including which
+VoiceState to show the display while a voice turn is in progress.
 """
 
 from __future__ import annotations
 
 from typing import List
 
+import numpy as np
+
 from src import config
 from src.camera.camera_stream import CameraStream
 from src.description.object_describer import ObjectDescriber, ObjectDescription
 from src.detection.object_detector import ObjectDetector
-from src.display.stream_display import StreamDisplay
-from src.llm.conversational_agent import ConversationalAgent
+from src.display.stream_display import StreamDisplay, VoiceState
+from src.llm.conversational_agent import ChatMessage, ConversationalAgent
 from src.microphone.microphone_stream import MicrophoneStream
 from src.speaker.speaker_output import SpeakerOutput
 from src.synthesis.speech_synthesizer import SpeechSynthesizer
@@ -35,7 +38,7 @@ def main() -> None:
     synthesizer = SpeechSynthesizer(config.PIPER_MODEL_PATH, config.PIPER_CONFIG_PATH)
     speaker = SpeakerOutput()
 
-    visible_objects: List[ObjectDescription] = []
+    voice_state = VoiceState.IDLE
 
     with CameraStream(config.CAMERA_INDEX, config.FRAME_WIDTH, config.FRAME_HEIGHT) as camera, \
             StreamDisplay(
@@ -53,13 +56,16 @@ def main() -> None:
 
             annotated_frame, detections = detector.detect(frame)
             visible_objects = describer.describe(frame, detections)
-            display.show(annotated_frame, visible_objects)
+            display.show(annotated_frame, visible_objects, voice_state, agent.history)
 
             key = display.poll_key()
             if key == config.QUIT_KEY:
                 break
             if key == config.VOICE_KEY:
-                _handle_voice_key(microphone, recognizer, agent, synthesizer, speaker, visible_objects)
+                voice_state = _handle_voice_key(
+                    microphone, recognizer, agent, synthesizer, speaker,
+                    display, annotated_frame, visible_objects,
+                )
 
 
 def _handle_voice_key(
@@ -68,27 +74,52 @@ def _handle_voice_key(
     agent: ConversationalAgent,
     synthesizer: SpeechSynthesizer,
     speaker: SpeakerOutput,
+    display: StreamDisplay,
+    annotated_frame: np.ndarray,
     visible_objects: List[ObjectDescription],
-) -> None:
-    """Push-to-talk: first press starts recording, second press sends it."""
-    if not microphone.is_recording():
-        print("[voice] listening... press 'v' again to stop")
-        microphone.start_recording()
-        return
+) -> VoiceState:
+    """Push-to-talk: first press starts recording, second press sends it.
 
-    print("[voice] transcribing...")
+    Returns the VoiceState the main loop should keep showing on the next
+    frame. Recording is genuinely live (the main loop keeps redrawing
+    while the mic buffers in the background); the transcribe/think/speak
+    steps are blocking, so we redraw once before each one so its status
+    is at least visible on screen for the whole step.
+    """
+    if not microphone.is_recording():
+        microphone.start_recording()
+        return VoiceState.RECORDING
+
     clip = microphone.stop_recording()
+
+    _redraw(display, annotated_frame, visible_objects, VoiceState.TRANSCRIBING, agent.history)
     user_message = recognizer.transcribe(clip)
     if not user_message:
         print("[voice] didn't catch that, try again")
-        return
-
+        return VoiceState.IDLE
     print(f"[voice] you: {user_message}")
-    print("[voice] thinking...")
+
+    _redraw(display, annotated_frame, visible_objects, VoiceState.THINKING, agent.history)
     reply = agent.ask(user_message, visible_objects)
     print(f"[voice] assistant: {reply}")
 
+    _redraw(display, annotated_frame, visible_objects, VoiceState.SPEAKING, agent.history)
     speaker.play(synthesizer.synthesize(reply))
+
+    return VoiceState.IDLE
+
+
+def _redraw(
+    display: StreamDisplay,
+    annotated_frame: np.ndarray,
+    visible_objects: List[ObjectDescription],
+    voice_state: VoiceState,
+    chat_history: List[ChatMessage],
+) -> None:
+    """Push a frame to screen immediately, so a status change is visible
+    before a blocking pipeline step runs."""
+    display.show(annotated_frame, visible_objects, voice_state, chat_history)
+    display.poll_key()
 
 
 if __name__ == "__main__":
