@@ -68,7 +68,12 @@ class MicrophoneStream:
     def is_recording(self) -> bool:
         return self._stream is not None
 
-    def _on_audio_block(self, indata: np.ndarray, frames: int, time_info: object, status: object) -> None:
+    def _on_audio_block(self, indata: np.ndarray, frames: int, time_info: object, status: sd.CallbackFlags) -> None:
+        if status:
+            # e.g. input overflow: the callback couldn't keep up and audio
+            # was dropped, usually because something else is hogging the
+            # CPU/GIL while a recording is in progress.
+            print(f"[microphone] audio callback status: {status}")
         self._frames.append(indata.copy())
 
     @staticmethod
