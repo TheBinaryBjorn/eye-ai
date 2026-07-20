@@ -73,13 +73,17 @@ once:
    By default the mic uses your system's default input device, which is
    not always the one you want (e.g. a webcam mic instead of a desk mic) —
    if recordings come out silent or Whisper keeps hallucinating "you" from
-   silence, list your devices and pick the right index:
+   silence, list your devices:
    ```bash
    python -c "import sounddevice as sd; print(sd.query_devices())"
    ```
-   then set `MIC_DEVICE` in `src/config.py` to that index. The console
-   also prints each recording's duration and peak level so you can tell
-   whether it's actually capturing sound.
+   then set `MIC_DEVICE` in `src/config.py` to a substring of the device's
+   name (e.g. `"Yeti Classic"`), resolved to whatever its current index is
+   at startup — device indices shift after driver updates, reboots, or a
+   USB device being plugged into a different port, so a name is more
+   durable than a hardcoded number. A numeric index still works if you'd
+   rather pin one. The console also prints each recording's duration and
+   peak level so you can tell whether it's actually capturing sound.
 
 ## Run
 

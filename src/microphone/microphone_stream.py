@@ -8,7 +8,7 @@ eventually be used.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import numpy as np
 import sounddevice as sd
@@ -27,11 +27,11 @@ class MicrophoneStream:
         self,
         sample_rate: int = 16000,
         channels: int = 1,
-        device: Optional[int] = None,
+        device: Optional[Union[int, str]] = None,
     ) -> None:
         self._sample_rate = sample_rate
         self._channels = channels
-        self._device = device
+        self._device = self._resolve_device(device)
         self._frames: List[np.ndarray] = []
         self._stream: Optional[sd.InputStream] = None
 
@@ -70,3 +70,24 @@ class MicrophoneStream:
 
     def _on_audio_block(self, indata: np.ndarray, frames: int, time_info: object, status: object) -> None:
         self._frames.append(indata.copy())
+
+    @staticmethod
+    def _resolve_device(device: Optional[Union[int, str]]) -> Optional[int]:
+        """Resolve a device index, a name substring, or None (system default).
+
+        A numeric index is fragile -- it can shift after a driver update, a
+        device is unplugged, or the same config is used on another machine.
+        A name substring is stable across all of those, at the cost of one
+        extra lookup at startup.
+        """
+        if device is None or isinstance(device, int):
+            return device
+
+        for index, info in enumerate(sd.query_devices()):
+            if device.lower() in info["name"].lower() and info["max_input_channels"] > 0:
+                return index
+
+        raise ValueError(
+            f"No input device matching {device!r} found. Run "
+            '`python -c "import sounddevice as sd; print(sd.query_devices())"` to list devices.'
+        )
