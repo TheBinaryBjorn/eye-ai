@@ -20,6 +20,13 @@ VOICE_KEY = "v"  # press to start recording a question, press again to stop and 
 
 # Voice pipeline: microphone -> transcription -> llm -> synthesis -> speaker
 MIC_SAMPLE_RATE = 16000
+
+# None uses the system default input device, which is not always the mic
+# you want (e.g. a webcam mic instead of a desk mic). Run
+# `python -c "import sounddevice as sd; print(sd.query_devices())"` to list
+# devices and their index, then set this to the right one if recordings
+# come out silent/garbled.
+MIC_DEVICE = None
 WHISPER_MODEL_SIZE = "base.en"
 LLM_MODEL = "llama3.2"
 OLLAMA_HOST = "http://localhost:11434"
