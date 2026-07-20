@@ -1,13 +1,14 @@
 """Output stream module.
 
 Sole responsibility: composite the annotated frame and the object
-descriptions into a single window, and report when the user wants to quit.
-Knows nothing about how frames are captured, detected, or described.
+descriptions into a single window, and report key presses from that window
+(quit, voice trigger, etc). Knows nothing about how frames are captured,
+detected, or described, and nothing about what a given key press means.
 """
 
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -46,8 +47,12 @@ class StreamDisplay:
         canvas = np.hstack([annotated_frame, panel])
         cv2.imshow(self._window_name, canvas)
 
-    def should_quit(self, quit_key: str = "q") -> bool:
-        return cv2.waitKey(1) & 0xFF == ord(quit_key)
+    def poll_key(self) -> Optional[str]:
+        """Return the character key pressed since the last poll, if any."""
+        key = cv2.waitKey(1) & 0xFF
+        if key == 255:
+            return None
+        return chr(key)
 
     def close(self) -> None:
         cv2.destroyAllWindows()

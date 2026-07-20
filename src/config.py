@@ -16,3 +16,16 @@ PANEL_TEXT_COLOR = (230, 230, 230)
 PANEL_SUBTEXT_COLOR = (160, 160, 160)
 
 QUIT_KEY = "q"
+VOICE_KEY = "v"  # press to start recording a question, press again to stop and send it
+
+# Voice pipeline: microphone -> transcription -> llm -> synthesis -> speaker
+MIC_SAMPLE_RATE = 16000
+WHISPER_MODEL_SIZE = "base.en"
+LLM_MODEL = "llama3.2"
+OLLAMA_HOST = "http://localhost:11434"
+
+# A Piper voice is two files (an .onnx model and its .onnx.json config).
+# Download one from https://github.com/rhasspy/piper/blob/master/VOICES.md
+# and point these at the files, e.g. via `python -m piper.download_voices`.
+PIPER_MODEL_PATH = "models/en_US-lessac-medium.onnx"
+PIPER_CONFIG_PATH = "models/en_US-lessac-medium.onnx.json"
