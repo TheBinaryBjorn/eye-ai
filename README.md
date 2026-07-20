@@ -29,7 +29,7 @@ in `main.py`, which is the single place that wires them together.
 - [src/synthesis/speech_synthesizer.py](src/synthesis/speech_synthesizer.py) — `SpeechSynthesizer`: wraps a local Piper TTS voice, turns the LLM's text reply into an `AudioClip`. Knows nothing about the LLM or playback.
 - [src/speaker/speaker_output.py](src/speaker/speaker_output.py) — `SpeakerOutput`: hardware interaction only. Plays an `AudioClip` through the system speakers. Knows nothing about how it was synthesized.
 
-- [main.py](main.py) — runs the vision loop every frame, and on a `v` key press runs one push-to-talk turn through the voice pipeline using the vision pipeline's latest `ObjectDescription` list as context. Tracks which `VoiceState` (recording/transcribing/thinking/speaking) the display should show, and passes the agent's `history` to it each frame so the side panel stays current.
+- [main.py](main.py) — runs the vision loop every frame, and on a `v` key press runs one push-to-talk turn through the voice pipeline using the vision pipeline's latest `ObjectDescription` list as context. Tracks which `VoiceState` (recording/transcribing/thinking/speaking) the display should show, and passes the agent's `history` to it each frame so the side panel stays current. The transcribe → think → speak steps run on a background thread (`_VoiceSession` holds the current state behind a lock), so the video loop and status banner never stop while a turn is in progress; a key press mid-turn is ignored rather than starting a second, overlapping turn.
 
 The side panel (still rendered by `StreamDisplay`, still fed nothing but
 plain data) has three parts: a status banner reflecting the current
@@ -70,6 +70,16 @@ once:
    [Piper voice list](https://github.com/rhasspy/piper/blob/master/VOICES.md).
 3. **A working microphone/speaker** reachable by `sounddevice` (PortAudio).
    `faster-whisper` downloads its own Whisper model weights on first use.
+   By default the mic uses your system's default input device, which is
+   not always the one you want (e.g. a webcam mic instead of a desk mic) —
+   if recordings come out silent or Whisper keeps hallucinating "you" from
+   silence, list your devices and pick the right index:
+   ```bash
+   python -c "import sounddevice as sd; print(sd.query_devices())"
+   ```
+   then set `MIC_DEVICE` in `src/config.py` to that index. The console
+   also prints each recording's duration and peak level so you can tell
+   whether it's actually capturing sound.
 
 ## Run
 
@@ -92,14 +102,10 @@ Objects", and "Chat History".
   bottom.
 - Press `q` to quit.
 
-Notes:
-- The video window freezes for the few seconds it takes to transcribe,
-  think, and speak during a voice turn — the vision and voice pipelines
-  share one thread in this version. Each status is still shown on screen
-  for the whole step it describes, since the panel is redrawn right before
-  that step starts.
-- A key pressed while a voice turn is mid-flight (e.g. `q` during
-  "Thinking...") is not registered — press it again once the turn finishes.
+The video keeps running the whole time — transcribing/thinking/speaking
+happens on a background thread, so the status banner updates live and `q`
+still works mid-turn. A `v` press while a turn is already in progress is
+ignored (finish or wait out the current turn before starting another).
 
 ## Configuration
 
