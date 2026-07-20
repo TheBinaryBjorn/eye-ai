@@ -1,3 +1,9 @@
 opencv-python>=4.9
 ultralytics>=8.2
 numpy>=1.26
+
+# Voice assistant pipeline
+sounddevice>=0.4.6
+faster-whisper>=1.0
+ollama>=0.3
+piper-tts>=1.2

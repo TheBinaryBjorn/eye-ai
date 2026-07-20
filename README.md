@@ -5,24 +5,37 @@ boxes around them, and shows a single window with the annotated video on
 the left and a description panel (color, size, an interesting fact per
 object) on the right.
 
-This is the first step toward a larger vision assistant: a later phase will
-add a local LLM (with TTS/STT) so you can talk to it about what it sees.
+It also doubles as a voice assistant: press `v` to ask a local LLM a
+question by voice, and it answers out loud, grounded in what it currently
+sees through the camera.
 
 ## Architecture
 
-Each module owns exactly one concern:
+Each module owns exactly one concern. Two independent pipelines meet only
+in `main.py`, which is the single place that wires them together.
+
+**Vision pipeline** (camera → detect → describe → display):
 
 - [src/camera/camera_stream.py](src/camera/camera_stream.py) — `CameraStream`: opens the webcam and returns raw frames. Knows nothing about detection, description, or display.
 - [src/detection/object_detector.py](src/detection/object_detector.py) — `ObjectDetector`: takes a frame, runs YOLOv8 detection, draws red boxes/labels, returns the annotated frame and the raw `Detection` list (label, confidence, box). Knows nothing about the camera, descriptions, or display.
 - [src/description/object_describer.py](src/description/object_describer.py) — `ObjectDescriber`: takes the original frame and `Detection` list, and for each one derives a dominant color, a size classification, and a short fact, returning `ObjectDescription` records. Knows nothing about the camera, detection internals, or display.
-- [src/display/stream_display.py](src/display/stream_display.py) — `StreamDisplay`: composites the annotated frame and the `ObjectDescription` list into one window (video + side panel) and reports quit requests. Knows nothing about capture, detection, or description logic.
-- [main.py](main.py) — wires the four modules together in a read → detect → describe → show loop.
+- [src/display/stream_display.py](src/display/stream_display.py) — `StreamDisplay`: composites the annotated frame and the `ObjectDescription` list into one window (video + side panel), and reports raw key presses from that window. Knows nothing about capture, detection, description, or what any given key means.
 
-Because each module only depends on plain data (numpy frames, `Detection`
-and `ObjectDescription` dataclasses) rather than on each other's internals,
-any one of them can be swapped (e.g. a different camera source, a different
-model backend, richer descriptions, a different display target) without
-touching the others.
+**Voice pipeline** (microphone → transcribe → llm → synthesize → speaker), triggered by pressing `v` in the video window:
+
+- [src/microphone/microphone_stream.py](src/microphone/microphone_stream.py) — `MicrophoneStream`: hardware interaction only. Records raw audio while active and returns an `AudioClip` (samples + sample rate). Knows nothing about transcription.
+- [src/transcription/speech_recognizer.py](src/transcription/speech_recognizer.py) — `SpeechRecognizer`: wraps a local `faster-whisper` model, turns an `AudioClip` into text. Knows nothing about the microphone or the LLM.
+- [src/llm/conversational_agent.py](src/llm/conversational_agent.py) — `ConversationalAgent`: wraps a local Ollama model, holds the chat history, and answers a question given the current `ObjectDescription` list as scene context. Knows nothing about audio hardware, transcription, or synthesis.
+- [src/synthesis/speech_synthesizer.py](src/synthesis/speech_synthesizer.py) — `SpeechSynthesizer`: wraps a local Piper TTS voice, turns the LLM's text reply into an `AudioClip`. Knows nothing about the LLM or playback.
+- [src/speaker/speaker_output.py](src/speaker/speaker_output.py) — `SpeakerOutput`: hardware interaction only. Plays an `AudioClip` through the system speakers. Knows nothing about how it was synthesized.
+
+- [main.py](main.py) — runs the vision loop every frame, and on a `v` key press runs one push-to-talk turn through the voice pipeline using the vision pipeline's latest `ObjectDescription` list as context.
+
+Because every module only exchanges plain data (numpy frames, `Detection` /
+`ObjectDescription` / `AudioClip` dataclasses, or text) with its neighbors,
+any one of them can be swapped independently — a different camera, a
+different detection model, a different STT/TTS engine, or a different LLM
+backend — without touching the others.
 
 ## Setup
 
@@ -32,7 +45,24 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-The first run downloads the `yolov8n.pt` pretrained weights automatically.
+The first run of the vision pipeline downloads the `yolov8n.pt` pretrained
+weights automatically. The voice pipeline needs three more things set up
+once:
+
+1. **Ollama**, running locally with a model pulled:
+   ```bash
+   ollama pull llama3.2
+   ```
+   `src/config.py` -> `LLM_MODEL` / `OLLAMA_HOST` point at it.
+2. **A Piper voice**, downloaded to `models/`:
+   ```bash
+   python -m piper.download_voices en_US-lessac-medium --data-dir models
+   ```
+   `src/config.py` -> `PIPER_MODEL_PATH` / `PIPER_CONFIG_PATH` point at the
+   downloaded `.onnx` / `.onnx.json` files. Browse other voices at the
+   [Piper voice list](https://github.com/rhasspy/piper/blob/master/VOICES.md).
+3. **A working microphone/speaker** reachable by `sounddevice` (PortAudio).
+   `faster-whisper` downloads its own Whisper model weights on first use.
 
 ## Run
 
@@ -42,9 +72,19 @@ python main.py
 
 One window opens: the live video with red bounding boxes on the left, and a
 "Detected Objects" panel on the right listing each object's name,
-confidence, size, dominant color, and a short fact. Press `q` to quit.
+confidence, size, dominant color, and a short fact.
+
+- Press `v` once to start recording a question, press `v` again to stop and
+  send it. The transcript and reply are printed to the console, and the
+  reply is spoken back through your speakers.
+- Press `q` to quit.
+
+Note: the video window freezes for the few seconds it takes to transcribe,
+think, and speak during a voice turn — the vision and voice pipelines share
+one thread in this version.
 
 ## Configuration
 
 Tunable values (camera index, resolution, model, confidence threshold, box
-color, panel width/colors) live in [src/config.py](src/config.py).
+color, panel width/colors, voice key, Whisper model size, Ollama model/host,
+Piper voice paths) live in [src/config.py](src/config.py).
