@@ -22,6 +22,9 @@ class SpeechSynthesizer:
         self._voice = PiperVoice.load(model_path, config_path=config_path)
 
     def synthesize(self, text: str) -> AudioClip:
-        raw_audio = b"".join(self._voice.synthesize_stream_raw(text))
-        samples = np.frombuffer(raw_audio, dtype=np.int16).astype(np.float32) / 32768.0
-        return AudioClip(samples=samples, sample_rate=self._voice.config.sample_rate)
+        chunks = list(self._voice.synthesize(text))
+        if not chunks:
+            return AudioClip(samples=np.zeros(0, dtype=np.float32), sample_rate=22050)
+
+        samples = np.concatenate([chunk.audio_float_array for chunk in chunks]).astype(np.float32)
+        return AudioClip(samples=samples, sample_rate=chunks[0].sample_rate)
