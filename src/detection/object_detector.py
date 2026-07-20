@@ -25,14 +25,19 @@ class Detection:
 class ObjectDetector:
     """Wraps a YOLO model to recognize and annotate objects in frames."""
 
-    _BOX_COLOR = (0, 255, 0)
-    _TEXT_COLOR = (0, 0, 0)
+    _TEXT_COLOR = (255, 255, 255)
     _FONT = cv2.FONT_HERSHEY_SIMPLEX
     _FONT_SCALE = 0.5
 
-    def __init__(self, model_name: str = "yolov8n.pt", confidence_threshold: float = 0.5) -> None:
+    def __init__(
+        self,
+        model_name: str = "yolov8n.pt",
+        confidence_threshold: float = 0.5,
+        box_color: Tuple[int, int, int] = (0, 0, 255),
+    ) -> None:
         self._model = YOLO(model_name)
         self._confidence_threshold = confidence_threshold
+        self._box_color = box_color
 
     def detect(self, frame: np.ndarray) -> Tuple[np.ndarray, List[Detection]]:
         """Recognize objects in `frame` and return (annotated_frame, detections)."""
@@ -54,12 +59,12 @@ class ObjectDetector:
 
     def _draw_detection(self, frame: np.ndarray, detection: Detection) -> None:
         x1, y1, x2, y2 = detection.box
-        cv2.rectangle(frame, (x1, y1), (x2, y2), self._BOX_COLOR, 2)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), self._box_color, 2)
 
         label = f"{detection.label} {detection.confidence:.2f}"
         (text_w, text_h), baseline = cv2.getTextSize(label, self._FONT, self._FONT_SCALE, 1)
         label_top = max(y1 - text_h - baseline - 4, 0)
-        cv2.rectangle(frame, (x1, label_top), (x1 + text_w + 4, y1), self._BOX_COLOR, -1)
+        cv2.rectangle(frame, (x1, label_top), (x1 + text_w + 4, y1), self._box_color, -1)
         cv2.putText(
             frame,
             label,
