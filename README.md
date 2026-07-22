@@ -5,7 +5,7 @@ boxes around them, and shows a single window with the annotated video on
 the left and a description panel (color, size, an interesting fact per
 object) on the right.
 
-It also doubles as a voice assistant: press `v` to ask a local LLM a
+It also doubles as a voice assistant: hold `v` to ask a local LLM a
 question by voice, and it answers out loud, grounded in what it currently
 sees through the camera.
 
@@ -21,7 +21,7 @@ in `main.py`, which is the single place that wires them together.
 - [src/description/object_describer.py](src/description/object_describer.py) — `ObjectDescriber`: takes the original frame and `Detection` list, and for each one derives a dominant color, a size classification, and a short fact, returning `ObjectDescription` records. Knows nothing about the camera, detection internals, or display.
 - [src/display/stream_display.py](src/display/stream_display.py) — `StreamDisplay`: composites the annotated frame and the `ObjectDescription` list into one window (video + side panel), and reports raw key presses from that window. Knows nothing about capture, detection, description, or what any given key means.
 
-**Voice pipeline** (microphone → transcribe → llm → synthesize → speaker), triggered by pressing `v` in the video window:
+**Voice pipeline** (microphone → transcribe → llm → synthesize → speaker), triggered by holding `v` in the video window:
 
 - [src/microphone/microphone_stream.py](src/microphone/microphone_stream.py) — `MicrophoneStream`: hardware interaction only. Records raw audio while active and returns an `AudioClip` (samples + sample rate). Knows nothing about transcription.
 - [src/transcription/speech_recognizer.py](src/transcription/speech_recognizer.py) — `SpeechRecognizer`: wraps a local `faster-whisper` model, turns an `AudioClip` into text. Knows nothing about the microphone or the LLM.
@@ -29,7 +29,7 @@ in `main.py`, which is the single place that wires them together.
 - [src/synthesis/speech_synthesizer.py](src/synthesis/speech_synthesizer.py) — `SpeechSynthesizer`: wraps a local Piper TTS voice, turns the LLM's text reply into an `AudioClip`. Knows nothing about the LLM or playback.
 - [src/speaker/speaker_output.py](src/speaker/speaker_output.py) — `SpeakerOutput`: hardware interaction only. Plays an `AudioClip` through the system speakers. Knows nothing about how it was synthesized.
 
-- [main.py](main.py) — runs the vision loop every frame, and on a `v` key press runs one push-to-talk turn through the voice pipeline using the vision pipeline's latest `ObjectDescription` list as context. Tracks which `VoiceState` (recording/transcribing/thinking/speaking) the display should show, and passes the agent's `history` to it each frame so the side panel stays current. The transcribe → think → speak steps run on a background thread (`_VoiceSession` holds the current state behind a lock), so the video loop and status banner never stop while a turn is in progress; a key press mid-turn is ignored rather than starting a second, overlapping turn.
+- [main.py](main.py) — runs the vision loop every frame. Voice input is true hold-to-talk: recording starts the instant `v` is physically pressed and stops the instant it's released, using the vision pipeline's latest `ObjectDescription` list as context for the question. This is edge-triggered off `v`'s actual key state (polled directly via the Windows API, since `cv2`'s own key polling only ever reports key-*down* events and can't detect release) rather than off discrete key-press events, so holding the key doesn't repeatedly retrigger anything — a hold that generates dozens of OS key-repeat events still produces exactly one start and one stop. Tracks which `VoiceState` (recording/transcribing/thinking/speaking) the display should show, and passes the agent's `history` to it each frame so the side panel stays current. The transcribe → think → speak steps run on a background thread (`_VoiceSession` holds the current state behind a lock), so the video loop and status banner never stop while a turn is in progress; holding `v` again while a turn is already in progress is ignored rather than starting a second, overlapping turn.
 
 The side panel (still rendered by `StreamDisplay`, still fed nothing but
 plain data) has three parts: a status banner reflecting the current
@@ -95,12 +95,13 @@ One window opens: the live video with red bounding boxes on the left, and a
 side panel on the right with three sections — a status banner, "Detected
 Objects", and "Chat History".
 
-- Press `v` once to start recording a question; the status banner shows a
-  blinking red **● Recording** dot (this part is genuinely live). Press `v`
-  again to stop and send it.
-- While your question is processed, the banner steps through
-  **Transcribing... → Thinking... → Speaking...** (orange / yellow /
-  green), and the reply is spoken back through your speakers.
+- **Hold** `v` down while you ask your question, and **release** it when
+  you're done — true push-to-talk, not a toggle. The status banner shows a
+  blinking red **● Recording** dot the whole time it's held (this part is
+  genuinely live).
+- Once you release `v`, the banner steps through **Transcribing... →
+  Thinking... → Speaking...** (orange / yellow / green), and the reply is
+  spoken back through your speakers.
 - Once a turn completes, "Chat History" shows the tail of the conversation
   (your transcribed question and the assistant's reply), most recent at the
   bottom.
@@ -108,8 +109,9 @@ Objects", and "Chat History".
 
 The video keeps running the whole time — transcribing/thinking/speaking
 happens on a background thread, so the status banner updates live and `q`
-still works mid-turn. A `v` press while a turn is already in progress is
-ignored (finish or wait out the current turn before starting another).
+still works mid-turn. Holding `v` again while a turn is already in
+progress is ignored (finish or wait out the current turn before starting
+another).
 
 ## Configuration
 
