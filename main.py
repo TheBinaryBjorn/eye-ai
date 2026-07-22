@@ -8,7 +8,13 @@ Every module above only exchanges plain data with its neighbors (frames,
 Detection/ObjectDescription records, AudioClip, ChatMessage, text) -- this
 file is the only place that knows how they fit together.
 
-The transcribe/think/speak steps of a voice turn run on a background
+Detection + description run on their own background thread (see
+_PerceptionWorker), so the display loop only has to read a frame, draw the
+most recently available boxes on it, and show it -- it runs at camera FPS
+and stays smooth no matter how slow YOLO is or what the voice pipeline is
+doing on other threads.
+
+The transcribe/think/speak steps of a voice turn also run on a background
 thread (see _VoiceSession) so the video loop -- and the live status
 banner -- never stops while a turn is in progress.
 
@@ -52,6 +58,62 @@ def _is_voice_key_down() -> bool:
     return bool(ctypes.windll.user32.GetAsyncKeyState(vk_code) & _KEY_DOWN_FLAG)
 
 
+class _PerceptionWorker:
+    """Runs detection + description on a background thread.
+
+    The display loop hands it the newest frame via submit() and reads back
+    the most recent results via latest(), never blocking on YOLO itself.
+    Only the latest submitted frame is ever processed -- if detection can't
+    keep up with the camera, intermediate frames are simply skipped, which
+    is what we want (we always want the freshest possible detections, not a
+    backlog of stale ones).
+    """
+
+    def __init__(self, detector: ObjectDetector, describer: ObjectDescriber) -> None:
+        self._detector = detector
+        self._describer = describer
+        self._lock = threading.Lock()
+        self._pending_frame: "np.ndarray | None" = None
+        self._new_frame = threading.Event()
+        self._detections: List = []
+        self._descriptions: List[ObjectDescription] = []
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def submit(self, frame: np.ndarray) -> None:
+        with self._lock:
+            self._pending_frame = frame
+        self._new_frame.set()
+
+    def latest(self) -> "tuple[List, List[ObjectDescription]]":
+        with self._lock:
+            return self._detections, list(self._descriptions)
+
+    def stop(self) -> None:
+        self._running = False
+        self._new_frame.set()
+        self._thread.join(timeout=1.0)
+
+    def _run(self) -> None:
+        while self._running:
+            self._new_frame.wait()
+            self._new_frame.clear()
+            with self._lock:
+                frame = self._pending_frame
+                self._pending_frame = None
+            if frame is None:
+                continue
+
+            detections = self._detector.detect(frame)
+            descriptions = self._describer.describe(frame, detections)
+            with self._lock:
+                self._detections = detections
+                self._descriptions = descriptions
+
+
 class _VoiceSession:
     """Tracks which phase of a voice turn is in progress, safely across threads."""
 
@@ -80,32 +142,40 @@ def main() -> None:
     speaker = SpeakerOutput()
 
     session = _VoiceSession()
+    perception = _PerceptionWorker(detector, describer)
+    perception.start()
 
-    with CameraStream(config.CAMERA_INDEX, config.FRAME_WIDTH, config.FRAME_HEIGHT) as camera, \
-            StreamDisplay(
-                config.WINDOW_NAME,
-                config.PANEL_WIDTH,
-                config.PANEL_BG_COLOR,
-                config.PANEL_HEADING_COLOR,
-                config.PANEL_TEXT_COLOR,
-                config.PANEL_SUBTEXT_COLOR,
-            ) as display:
-        while True:
-            frame = camera.read_frame()
-            if frame is None:
-                break
+    try:
+        with CameraStream(config.CAMERA_INDEX, config.FRAME_WIDTH, config.FRAME_HEIGHT) as camera, \
+                StreamDisplay(
+                    config.WINDOW_NAME,
+                    config.PANEL_WIDTH,
+                    config.PANEL_BG_COLOR,
+                    config.PANEL_HEADING_COLOR,
+                    config.PANEL_TEXT_COLOR,
+                    config.PANEL_SUBTEXT_COLOR,
+                ) as display:
+            while True:
+                frame = camera.read_frame()
+                if frame is None:
+                    break
 
-            annotated_frame, detections = detector.detect(frame)
-            visible_objects = describer.describe(frame, detections)
-            display.show(annotated_frame, visible_objects, session.state, agent.history)
+                # Detection runs on the worker thread; the display loop just
+                # draws the most recent boxes on the live frame and shows it.
+                perception.submit(frame)
+                detections, visible_objects = perception.latest()
+                annotated_frame = detector.annotate(frame, detections)
+                display.show(annotated_frame, visible_objects, session.state, agent.history)
 
-            key = display.poll_key()
-            if key == config.QUIT_KEY:
-                break
+                key = display.poll_key()
+                if key == config.QUIT_KEY:
+                    break
 
-            _handle_voice_key_state(
-                microphone, recognizer, agent, synthesizer, speaker, session, visible_objects,
-            )
+                _handle_voice_key_state(
+                    microphone, recognizer, agent, synthesizer, speaker, session, visible_objects,
+                )
+    finally:
+        perception.stop()
 
 
 def _handle_voice_key_state(
