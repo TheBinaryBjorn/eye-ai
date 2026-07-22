@@ -17,7 +17,7 @@ in `main.py`, which is the single place that wires them together.
 **Vision pipeline** (camera → detect → describe → display):
 
 - [src/camera/camera_stream.py](src/camera/camera_stream.py) — `CameraStream`: opens the webcam and returns raw frames. Knows nothing about detection, description, or display.
-- [src/detection/object_detector.py](src/detection/object_detector.py) — `ObjectDetector`: takes a frame, runs YOLOv8 detection, draws red boxes/labels, returns the annotated frame and the raw `Detection` list (label, confidence, box). Knows nothing about the camera, descriptions, or display.
+- [src/detection/object_detector.py](src/detection/object_detector.py) — `ObjectDetector`: `detect(frame)` runs YOLOv8 and returns the raw `Detection` list (label, confidence, box); `annotate(frame, detections)` draws red boxes/labels onto a frame. These are deliberately separate so detection can run on one (older) frame while the boxes are drawn onto a newer, live one. Knows nothing about the camera, descriptions, or display.
 - [src/description/object_describer.py](src/description/object_describer.py) — `ObjectDescriber`: takes the original frame and `Detection` list, and for each one derives a dominant color, a size classification, and a short fact, returning `ObjectDescription` records. Knows nothing about the camera, detection internals, or display.
 - [src/display/stream_display.py](src/display/stream_display.py) — `StreamDisplay`: composites the annotated frame and the `ObjectDescription` list into one window (video + side panel), and reports raw key presses from that window. Knows nothing about capture, detection, description, or what any given key means.
 
@@ -29,7 +29,7 @@ in `main.py`, which is the single place that wires them together.
 - [src/synthesis/speech_synthesizer.py](src/synthesis/speech_synthesizer.py) — `SpeechSynthesizer`: wraps a local Piper TTS voice, turns the LLM's text reply into an `AudioClip`. Knows nothing about the LLM or playback.
 - [src/speaker/speaker_output.py](src/speaker/speaker_output.py) — `SpeakerOutput`: hardware interaction only. Plays an `AudioClip` through the system speakers. Knows nothing about how it was synthesized.
 
-- [main.py](main.py) — runs the vision loop every frame. Voice input is true hold-to-talk: recording starts the instant `v` is physically pressed and stops the instant it's released, using the vision pipeline's latest `ObjectDescription` list as context for the question. This is edge-triggered off `v`'s actual key state (polled directly via the Windows API, since `cv2`'s own key polling only ever reports key-*down* events and can't detect release) rather than off discrete key-press events, so holding the key doesn't repeatedly retrigger anything — a hold that generates dozens of OS key-repeat events still produces exactly one start and one stop. Tracks which `VoiceState` (recording/transcribing/thinking/speaking) the display should show, and passes the agent's `history` to it each frame so the side panel stays current. The transcribe → think → speak steps run on a background thread (`_VoiceSession` holds the current state behind a lock), so the video loop and status banner never stop while a turn is in progress; holding `v` again while a turn is already in progress is ignored rather than starting a second, overlapping turn.
+- [main.py](main.py) — runs the vision loop every frame. Detection + description run on a background worker (`_PerceptionWorker`), which always processes the newest frame and skips any it can't keep up with; the display loop just reads a frame, draws the most recent boxes on it, and shows it, so the video stays smooth at camera FPS no matter how slow YOLO is or what the voice pipeline is doing. Voice input is true hold-to-talk: recording starts the instant `v` is physically pressed and stops the instant it's released, using the vision pipeline's latest `ObjectDescription` list as context for the question. This is edge-triggered off `v`'s actual key state (polled directly via the Windows API, since `cv2`'s own key polling only ever reports key-*down* events and can't detect release) rather than off discrete key-press events, so holding the key doesn't repeatedly retrigger anything — a hold that generates dozens of OS key-repeat events still produces exactly one start and one stop. Tracks which `VoiceState` (recording/transcribing/thinking/speaking) the display should show, and passes the agent's `history` to it each frame so the side panel stays current. The transcribe → think → speak steps run on a background thread (`_VoiceSession` holds the current state behind a lock), so the video loop and status banner never stop while a turn is in progress; holding `v` again while a turn is already in progress is ignored rather than starting a second, overlapping turn.
 
 The side panel (still rendered by `StreamDisplay`, still fed nothing but
 plain data) has three parts: a status banner reflecting the current
@@ -111,9 +111,10 @@ Objects", and "Chat History".
   bottom.
 - Press `q` to quit.
 
-The video keeps running the whole time — transcribing/thinking/speaking
-happens on a background thread, so the status banner updates live and `q`
-still works mid-turn. Holding `v` again while a turn is already in
+The video stays smooth the whole time — detection runs on its own worker
+thread and transcribing/thinking/speaking on another, so the display loop
+itself only ever draws and shows frames. The status banner updates live and
+`q` still works mid-turn. Holding `v` again while a turn is already in
 progress is ignored (finish or wait out the current turn before starting
 another).
 
