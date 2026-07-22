@@ -19,7 +19,7 @@ in `main.py`, which is the single place that wires them together.
 - [src/camera/camera_stream.py](src/camera/camera_stream.py) — `CameraStream`: opens the webcam and returns raw frames. Knows nothing about detection, description, or display.
 - [src/detection/object_detector.py](src/detection/object_detector.py) — `ObjectDetector`: `detect(frame)` runs YOLOv8 and returns the raw `Detection` list (label, confidence, box); `annotate(frame, detections)` draws red boxes/labels onto a frame. These are deliberately separate so detection can run on one (older) frame while the boxes are drawn onto a newer, live one. Knows nothing about the camera, descriptions, or display.
 - [src/description/object_describer.py](src/description/object_describer.py) — `ObjectDescriber`: takes the original frame and `Detection` list, and for each one derives a dominant color, a size classification, and a short fact, returning `ObjectDescription` records. Knows nothing about the camera, detection internals, or display.
-- [src/display/stream_display.py](src/display/stream_display.py) — `StreamDisplay`: composites the annotated frame and the `ObjectDescription` list into one window (video + side panel), and reports raw key presses from that window. Knows nothing about capture, detection, description, or what any given key means.
+- [src/display/stream_display.py](src/display/stream_display.py) — `StreamDisplay`: composites the annotated frame and the `ObjectDescription` list into one window (video + side panel), and reports raw key presses from that window. The panel is styled as frosted "liquid glass" — its backdrop is a blurred, brightened crop of the live frame, with translucent rounded cards and anti-aliased Segoe UI text (via Pillow) drawn on top: a header, a status pill reflecting the current `VoiceState`, a detected-objects list, and the chat history. Knows nothing about capture, detection, description, or what any given key means.
 
 **Voice pipeline** (microphone → transcribe → llm → synthesize → speaker), triggered by holding `v` in the video window:
 
@@ -96,8 +96,8 @@ python main.py
 ```
 
 One window opens: the live video with red bounding boxes on the left, and a
-side panel on the right with three sections — a status banner, "Detected
-Objects", and "Chat History".
+frosted-glass side panel on the right — a header, a status pill, "Detected
+Objects", and "Conversation".
 
 - **Hold** `v` down while you ask your question, and **release** it when
   you're done — true push-to-talk, not a toggle. The status banner shows a
