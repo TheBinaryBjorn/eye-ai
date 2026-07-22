@@ -25,7 +25,7 @@ in `main.py`, which is the single place that wires them together.
 
 - [src/microphone/microphone_stream.py](src/microphone/microphone_stream.py) — `MicrophoneStream`: hardware interaction only. Records raw audio while active and returns an `AudioClip` (samples + sample rate). Knows nothing about transcription.
 - [src/transcription/speech_recognizer.py](src/transcription/speech_recognizer.py) — `SpeechRecognizer`: wraps a local `faster-whisper` model, turns an `AudioClip` into text. Knows nothing about the microphone or the LLM.
-- [src/llm/conversational_agent.py](src/llm/conversational_agent.py) — `ConversationalAgent`: wraps a local Ollama model, holds the chat history, and answers a question given the current `ObjectDescription` list as scene context. Exposes a clean `history` property (`ChatMessage` records, no system prompt or scene-context prefix) purely for display. Knows nothing about audio hardware, transcription, synthesis, or display.
+- [src/llm/conversational_agent.py](src/llm/conversational_agent.py) — `ConversationalAgent`: wraps a local Ollama model, holds the chat history, and answers a question given the current `ObjectDescription` list as scene context. Also owns making sure its own backend is reachable -- tries to launch `ollama serve` itself if it isn't running, both at construction and if a reply fails mid-session. Exposes a clean `history` property (`ChatMessage` records, no system prompt or scene-context prefix) purely for display. Knows nothing about audio hardware, transcription, synthesis, or display.
 - [src/synthesis/speech_synthesizer.py](src/synthesis/speech_synthesizer.py) — `SpeechSynthesizer`: wraps a local Piper TTS voice, turns the LLM's text reply into an `AudioClip`. Knows nothing about the LLM or playback.
 - [src/speaker/speaker_output.py](src/speaker/speaker_output.py) — `SpeakerOutput`: hardware interaction only. Plays an `AudioClip` through the system speakers. Knows nothing about how it was synthesized.
 
@@ -56,11 +56,15 @@ The first run of the vision pipeline downloads the `yolov8n.pt` pretrained
 weights automatically. The voice pipeline needs three more things set up
 once:
 
-1. **Ollama**, running locally with a model pulled:
+1. **Ollama**, installed with a model pulled:
    ```bash
    ollama pull llama3.2
    ```
-   `src/config.py` -> `LLM_MODEL` / `OLLAMA_HOST` point at it.
+   `src/config.py` -> `LLM_MODEL` / `OLLAMA_HOST` point at it. It doesn't
+   need to already be running -- `ConversationalAgent` checks on startup
+   and again before each reply, and tries to launch `ollama serve` itself
+   (via PATH) if it isn't reachable, waiting up to 20s for it to come up
+   before giving up with a clear error.
 2. **A Piper voice**, downloaded to `models/`:
    ```bash
    python -m piper.download_voices en_US-lessac-medium --data-dir models
