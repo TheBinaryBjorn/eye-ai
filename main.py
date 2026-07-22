@@ -11,10 +11,18 @@ file is the only place that knows how they fit together.
 The transcribe/think/speak steps of a voice turn run on a background
 thread (see _VoiceSession) so the video loop -- and the live status
 banner -- never stops while a turn is in progress.
+
+Voice input is true hold-to-talk: recording starts the instant VOICE_KEY
+is physically pressed down and stops the instant it's released. cv2's own
+key polling (used for QUIT_KEY) only ever reports key-*down* events, never
+release, so it can't do this -- VOICE_KEY's actual physical state is
+polled directly via the Windows API instead (see _is_voice_key_down).
+This is Windows-only; there's no cross-platform requirement here.
 """
 
 from __future__ import annotations
 
+import ctypes
 import threading
 from typing import List
 
@@ -35,6 +43,13 @@ from src.transcription.speech_recognizer import SpeechRecognizer
 # recording as effectively silent and warn instead of sending it to
 # Whisper, which tends to hallucinate "you"/"thank you" on silence.
 _SILENT_PEAK_THRESHOLD = 0.02
+
+_KEY_DOWN_FLAG = 0x8000
+
+
+def _is_voice_key_down() -> bool:
+    vk_code = ord(config.VOICE_KEY.upper())
+    return bool(ctypes.windll.user32.GetAsyncKeyState(vk_code) & _KEY_DOWN_FLAG)
 
 
 class _VoiceSession:
@@ -87,11 +102,13 @@ def main() -> None:
             key = display.poll_key()
             if key == config.QUIT_KEY:
                 break
-            if key == config.VOICE_KEY:
-                _handle_voice_key(microphone, recognizer, agent, synthesizer, speaker, session, visible_objects)
+
+            _handle_voice_key_state(
+                microphone, recognizer, agent, synthesizer, speaker, session, visible_objects,
+            )
 
 
-def _handle_voice_key(
+def _handle_voice_key_state(
     microphone: MicrophoneStream,
     recognizer: SpeechRecognizer,
     agent: ConversationalAgent,
@@ -100,27 +117,30 @@ def _handle_voice_key(
     session: _VoiceSession,
     visible_objects: List[ObjectDescription],
 ) -> None:
-    """Push-to-talk: first press starts recording, second press sends it.
+    """True hold-to-talk: start on the press edge, stop on the release edge.
 
-    The send side (transcribe -> think -> speak) runs on a background
-    thread so the caller (the video loop) is never blocked.
+    Only reacts to the two edges that actually matter -- IDLE-and-now-held
+    starts a recording, RECORDING-and-now-released stops it -- so holding
+    the key doesn't repeatedly retrigger anything, and the key is ignored
+    entirely while a previous turn is still being processed in the
+    background (state is TRANSCRIBING/THINKING/SPEAKING).
     """
+    key_down = _is_voice_key_down()
     state = session.state
-    if state == VoiceState.IDLE:
+
+    if key_down and state == VoiceState.IDLE:
         microphone.start_recording()
         session.set_state(VoiceState.RECORDING)
         return
 
-    if state != VoiceState.RECORDING:
-        return  # a previous turn is still being processed; ignore the key
-
-    clip = microphone.stop_recording()
-    session.set_state(VoiceState.TRANSCRIBING)
-    threading.Thread(
-        target=_run_voice_turn,
-        args=(clip, recognizer, agent, synthesizer, speaker, session, visible_objects),
-        daemon=True,
-    ).start()
+    if not key_down and state == VoiceState.RECORDING:
+        clip = microphone.stop_recording()
+        session.set_state(VoiceState.TRANSCRIBING)
+        threading.Thread(
+            target=_run_voice_turn,
+            args=(clip, recognizer, agent, synthesizer, speaker, session, visible_objects),
+            daemon=True,
+        ).start()
 
 
 def _run_voice_turn(
