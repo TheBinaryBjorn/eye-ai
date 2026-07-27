@@ -1,4 +1,5 @@
 # eye-ai
+<img width="836" height="422" alt="image" src="https://github.com/user-attachments/assets/2fc38f86-d220-418c-ac7f-d1f2b750c53a" />
 
 Reads a webcam stream, recognizes objects in each frame, draws red bounding
 boxes around them, and shows a single window with the annotated video on
